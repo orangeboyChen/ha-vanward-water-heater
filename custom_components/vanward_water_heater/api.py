@@ -16,6 +16,7 @@ from .const import (
     COMMAND_LOGIN,
     COMMAND_STATUS_REPORT,
     LOGIN_URL,
+    OFFLINE_TIMEOUT,
     WS_URL,
 )
 from .protocol import (
@@ -89,10 +90,45 @@ class VanwardApiClient:
         self.auth_failed = False
         self.states: dict[str, VanwardDeviceState] = {}
         self._pending_status: dict[str, PendingStatus] = {}
+        # v3.2: 设备最后上报时间（monotonic），用于离线判定
+        self._last_seen: dict[str, float] = {}
+        # v3.3: 设备最后在线时间（wall-clock UTC），用于"最后在线"sensor
+        self._last_online_at: dict[str, float] = {}
 
     @property
     def connected(self) -> bool:
         return self._ws is not None and not self._ws.closed
+
+    def last_online_at(self, device_id: str) -> float | None:
+        """Wall-clock UTC timestamp of the last status report (v3.3).
+
+        Used by the "last online" sensor so family members / admin can see
+        whether the device went offline just now or earlier (e.g. breaker
+        tripped in the afternoon).
+        """
+        return self._last_online_at.get(device_id)
+
+    def is_device_online(
+        self, device_id: str, timeout: float = OFFLINE_TIMEOUT
+    ) -> bool:
+        """True if the device is online.
+
+        v3.2: prefer the cloud's `isOnline` flag from the login payload
+        (same source as the Vanward app's "设备离线" badge). Fall back to
+        last status-report time when the flag is unavailable.
+        v3.3: default timeout reduced to 5 minutes (OFFLINE_TIMEOUT) so a
+        power cut / breaker trip surfaces as offline quickly instead of
+        showing a stale "heating" state for 15 minutes.
+        """
+        if not self.connected:
+            return False
+        state = self.states.get(device_id)
+        if state is not None:
+            return state.online
+        last = self._last_seen.get(device_id)
+        if last is None:
+            return False
+        return time.monotonic() - last < timeout
 
     def set_state_callback(self, callback: StateCallback) -> None:
         self._state_callback = callback
@@ -356,7 +392,11 @@ class VanwardApiClient:
                 _LOGGER.debug("Ignoring Vanward login response without devices")
                 return
             self.states = states
+            now = time.monotonic()
+            now_utc = time.time()
             for device_id, state in self.states.items():
+                self._last_seen[device_id] = now
+                self._last_online_at[device_id] = now_utc
                 self._notify_state(device_id, state)
             if (
                 self._login_response_future is not None
@@ -399,6 +439,8 @@ class VanwardApiClient:
                     else:
                         self._pending_status.pop(device_id, None)
                 self.states[device_id] = updated
+                self._last_seen[device_id] = time.monotonic()
+                self._last_online_at[device_id] = time.time()
                 self._notify_state(device_id, self.states[device_id])
 
     def _notify_state(self, device_id: str, state: VanwardDeviceState) -> None:

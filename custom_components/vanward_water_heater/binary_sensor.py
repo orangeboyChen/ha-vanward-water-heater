@@ -64,11 +64,13 @@ BINARY_SENSORS = [
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
+    # C3：heating 对电热有效（[2]==3 实测锚定）；水流量/风扇/防冻是燃气专属，电热跳过
     coordinators = entry.runtime_data.coordinators.values()
     entities = [
         VanwardBinarySensor(coordinator, description)
         for coordinator in coordinators
         for description in BINARY_SENSORS
+        if not coordinator.data.electric or description.key == "heating"
     ]
     _LOGGER.debug("Adding %s Vanward binary sensor entities", len(entities))
     async_add_entities(entities)

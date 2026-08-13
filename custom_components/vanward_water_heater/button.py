@@ -18,7 +18,10 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    coordinators = entry.runtime_data.coordinators.values()
+    # C3：呼叫按钮是燃气功能，电热机型不注册
+    coordinators = [
+        c for c in entry.runtime_data.coordinators.values() if not c.data.electric
+    ]
     entities = [VanwardCallButton(coordinator) for coordinator in coordinators]
     _LOGGER.debug("Adding %s Vanward button entities", len(entities))
     async_add_entities(entities)

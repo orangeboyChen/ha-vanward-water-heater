@@ -57,7 +57,10 @@ SWITCHES = [
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    coordinators = entry.runtime_data.coordinators.values()
+    # C3：单次/E享/水增压是燃气功能，电热机型不注册
+    coordinators = [
+        c for c in entry.runtime_data.coordinators.values() if not c.data.electric
+    ]
     entities = [
         VanwardSwitch(coordinator, description)
         for coordinator in coordinators
